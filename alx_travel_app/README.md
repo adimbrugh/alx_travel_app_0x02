@@ -89,3 +89,54 @@ Base URL: `/api/`
 | /bookings/{id}/       | DELETE | Delete booking by ID     |
 
 📘 Swagger Docs available at: `/swagger/`
+
+---
+
+# 🚀 Milestone 4 – Chapa Payment Integration
+
+## 📌 Objective
+Integrate the **Chapa API** into the Django application to handle secure payments for bookings.  
+
+This feature allows users to:
+- Initiate payments when booking.
+- Verify payment status.
+- Update booking/payment records accordingly.
+
+---
+
+## 🛠 Features Implemented
+
+### 1. Payment Model
+Located in listings/models.py:
+booking → ForeignKey to Booking
+transaction_id → Unique Chapa transaction reference
+amount → Payment amount
+status → Pending, Completed, Failed
+
+### 2. Payment API Endpoints
+Implemented in listings/views.py:
+POST /api/payments/initiate/ → Starts a payment with Chapa API and returns a payment link.
+GET /api/payments/verify/<transaction_id>/ → Verifies payment status with Chapa and updates DB.
+
+### 3. Payment Workflow
+User books a listing.
+System initiates a payment request to Chapa API.
+Chapa returns a payment link → sent to user.
+User completes payment.
+System verifies payment and updates status.
+
+### 4Testing the Payment Integration Using Chapa Sandbox
+Go to Chapa Sandbox for test credentials.
+Initiate payment and check the transaction status.
+
+Example Test Request – Initiate Payment
+POST /api/payments/initiate/
+{
+    "booking_id": 1,
+    "amount": 500
+}
+
+Example Test Request – Verify Payment
+GET /api/payments/verify/<transaction_id>/
+
+---
