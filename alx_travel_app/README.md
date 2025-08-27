@@ -140,3 +140,15 @@ Example Test Request – Verify Payment
 GET /api/payments/verify/<transaction_id>/
 
 ---
+
+# 🚀 Milestone 5 Background Task Management with Celery and Email Notifications
+
+## Objective
+Configure **Celery** with **RabbitMQ** to handle background tasks and implement an email notification feature for bookings in the `alx_travel_app_0x03` project.
+
+## Setup
+1. Start RabbitMQ:
+   ```bash
+   docker run -d --hostname rabbit --name rabbitmq -p 5672:5672 rabbitmq:3-management
+
+---

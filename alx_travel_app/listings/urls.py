@@ -1,8 +1,8 @@
 
 
-from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import ListingViewSet, BookingViewSet, ReviewViewSet, PaymentViewSet
+from .views import ListingViewSet, BookingViewSet, ReviewViewSet, InitiatePaymentView
+from django.urls import path, include
 
 
 
@@ -12,8 +12,8 @@ router.register(r'booking', BookingViewSet)
 router.register(r'reviews', ReviewViewSet)  # Added ReviewViewSet
 
 
-payment_view = PaymentViewSet.as_view({'post': 'initiate_payment'})
-verify_view = PaymentViewSet.as_view({'get': 'verify_payment'})
+payment_view = InitiatePaymentView.as_view({'post': 'initiate_payment'})
+verify_view = InitiatePaymentView.as_view({'get': 'verify_payment'})
 
 
 urlpatterns = [

@@ -5,6 +5,7 @@ from django.db import models
 from django.contrib.auth.models import User
 
 
+
 class Listing(models.Model):
     PROPERTY_TYPES = [
         ('APARTMENT', 'Apartment'),
@@ -44,11 +45,12 @@ class Listing(models.Model):
     
 
 class Booking(models.Model):
-    class StatusChoices(models.TextChoices):
-        PENDING = 'PENDING', 'Pending'
-        CONFIRMED = 'CONFIRMED', 'Confirmed'
-        CANCELLED = 'CANCELLED', 'Cancelled'
-        COMPLETED = 'COMPLETED', 'Completed'
+    TextChoices = [
+        ('PENDING', 'Pending'),
+        ('CONFIRMED', 'Confirmed') ,
+        ('CANCELLED', 'Cancelled'), 
+        ('COMPLETED', 'Completed') 
+    ]
         
     booking_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -59,7 +61,7 @@ class Booking(models.Model):
     special_requests = models.TextField(blank=True)
     total_price = models.BigIntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=10, choices=StatusChoices.choices, default=StatusChoices.PENDING)
+    status = models.CharField(max_length=10, choices=TextChoices, default=TextChoices.PENDING)
     
     class Meta:
         unique_together = ('user', 'listing', 'start_date', 'end_date')
@@ -98,6 +100,11 @@ class Payment(models.Model):
     status = models.CharField(max_length=20, default='Pending')  # Pending, Completed, Failed
     transaction_id = models.CharField(max_length=100, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    chapa_response = models.JSONField(null=True, blank=True)
 
     def __str__(self):
         return f"Payment {self.id} - {self.status}"
+    
+    class Meta:
+        ordering = ['-created_at']

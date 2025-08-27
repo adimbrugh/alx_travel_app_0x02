@@ -1,85 +1,134 @@
-from django.shortcuts import render
 
-# Create your views here.
-import requests
-from django.conf import settings
-from rest_framework import viewsets, status
-from rest_framework.response import Response
-from .models import Listing, Booking, Review, Payment
 from .serializers import ListingSerializer, BookingSerializer, ReviewSerializer
-#from .serializers import PaymentSerializer
+from .payment_utilty import initiate_chapa_payment, CHAPA_VERIFY_URL
+from rest_framework import viewsets, permissions, status
+from .models import Listing, Booking, Review, Payment
+from rest_framework.response import Response
+from .tasks import send_booking_confirmation
+from rest_framework.views import APIView
+from alx_travel_app import settings
+import requests
+import os
 
 
 
 class ListingViewSet(viewsets.ModelViewSet):
     queryset = Listing.objects.all()
     serializer_class = ListingSerializer
-    
-    
-    
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def perform_create(self, serializer):
+        serializer.save(host=self.request.user)
+
+
+
 class BookingViewSet(viewsets.ModelViewSet):
     queryset = Booking.objects.all()
     serializer_class = BookingSerializer
-    
-    
-    
+    permission_classes = [permissions.IsAuthenticated]
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user) # Save the booking with the current user
+        # Trigger confirmation email (Celery task)
+        send_booking_confirmation.delay(serializer.instance.id)
+        Booking = serializer.svave() # This line seems unnecessary and may cause an error
+        user_email = self.request.user.email
+        # You can pass user_email to the task if needed
+
+
+
 class ReviewViewSet(viewsets.ModelViewSet):
     queryset = Review.objects.all()
     serializer_class = ReviewSerializer
-    
-    
-    
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
-class PaymentViewSet(viewsets.ViewSet):
-    def initiate_payment(self, request, booking_id):
+
+
+class InitiatePaymentView(APIView):
+    def post(self, request, booking_id):
         try:
-            booking = Booking.objects.get(id=booking_id)
-        except Booking.DoesNotExist:
-            return Response({"error": "Booking not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        data = {
-            "amount": str(booking.total_price),
-            "currency": "ETB",
-            "email": booking.user.email,
-            "first_name": booking.user.first_name,
-            "last_name": booking.user.last_name,
-            "tx_ref": f"booking_{booking.id}",
-            "callback_url": "https://yourdomain.com/payment/callback"
-        }
-
-        headers = {
-            "Authorization": f"Bearer {settings.CHAPA_SECRET_KEY}"
-        }
-
-        response = requests.post(f"{settings.CHAPA_API_BASE_URL}/transaction/initialize", json=data, headers=headers)
-        chapa_response = response.json()
-
-        if response.status_code == 200 and chapa_response.get("status") == "success":
+            booking = Booking.objects.get(id=booking_id, user=request.user)
+            
+            # Check if payment already exists
+            if hasattr(booking, 'payment'):
+                return Response(
+                    {"error": "Payment already initiated for this booking"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Initiate payment with Chapa
+            payment_response = initiate_chapa_payment(booking, request)
+            
+            if not payment_response or 'status' not in payment_response or payment_response['status'] != 'success':
+                return Response(
+                    {"error": "Failed to initiate payment"},
+                    status=status.HTTP_502_BAD_GATEWAY
+                )
+            
+            # Create payment record
             payment = Payment.objects.create(
                 booking=booking,
                 amount=booking.total_price,
-                transaction_id=chapa_response["data"]["tx_ref"],
-                status="Pending"
+                transaction_id=payment_response['data']['tx_ref'],
+                chapa_response=payment_response
             )
-            return Response({"payment_url": chapa_response["data"]["checkout_url"]})
-        return Response({"error": chapa_response.get("message", "Payment initiation failed")}, status=400)
+            
+            return Response({
+                "status": "success",
+                "checkout_url": payment_response['data']['checkout_url'],
+                "transaction_id": payment.transaction_id
+            })
+            
+        except Booking.DoesNotExist:
+            return Response(
+                {"error": "Booking not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-    def verify_payment(self, request, tx_ref):
-        headers = {
-            "Authorization": f"Bearer {settings.CHAPA_SECRET_KEY}"
-        }
-        response = requests.get(f"{settings.CHAPA_API_BASE_URL}/transaction/verify/{tx_ref}", headers=headers)
-        chapa_response = response.json()
-
+class VerifyPaymentView(APIView):
+    def get(self, request):
+        transaction_id = request.query_params.get('tx_ref')
+        
+        if not transaction_id:
+            return Response(
+                {"error": "Transaction reference required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         try:
-            payment = Payment.objects.get(transaction_id=tx_ref)
+            payment = Payment.objects.get(transaction_id=transaction_id)
+            
+            # Verify with Chapa API
+            headers = {
+                "Authorization": f"Bearer {settings.CHAPA_SECRET_KEY}"
+            }
+            
+            verify_url = f"{CHAPA_VERIFY_URL}{transaction_id}"
+            response = requests.get(verify_url, headers=headers)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data['status'] == 'success':
+                    payment.status = 'completed'
+                    payment.chapa_response = data
+                    payment.save()
+                    
+                    # Trigger confirmation email (Celery task)
+                    send_booking_confirmation.delay(payment.booking.id)
+                    
+                    return Response({"status": "completed"})
+                else:
+                    payment.status = 'failed'
+                    payment.save()
+                    return Response({"status": "failed"})
+            
+            return Response(
+                {"error": "Payment verification failed"},
+                status=status.HTTP_502_BAD_GATEWAY
+            )
+            
         except Payment.DoesNotExist:
-            return Response({"error": "Payment record not found"}, status=404)
-
-        if chapa_response.get("status") == "success" and chapa_response["data"]["status"] == "success":
-            payment.status = "Completed"
-        else:
-            payment.status = "Failed"
-        payment.save()
-
-        return Response({"status": payment.status})
+            return Response(
+                {"error": "Payment not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
